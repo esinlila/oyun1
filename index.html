@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graffiti Runner (Easy Mode)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+        
+        body {
+            font-family: 'Poppins', sans-serif;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            background-color: #111827;
+        }
+        
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #start-screen, #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            z-index: 10;
+        }
+        
+        #score-display {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 24px;
+            z-index: 5;
+        }
+        
+        #high-score-display {
+            position: absolute;
+            top: 50px;
+            left: 20px;
+            color: #fbbf24;
+            font-size: 18px;
+            z-index: 5;
+        }
+        
+        .player {
+            position: absolute;
+            transition: transform 0.1s;
+        }
+        
+        .obstacle {
+            position: absolute;
+        }
+        
+        .coin {
+            position: absolute;
+            animation: spin 2s linear infinite;
+        }
+        
+        .powerup {
+            position: absolute;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .track {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 30px;
+            background-color: #374151;
+        }
+        
+        .train {
+            position: absolute;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+        
+        <div id="score-display">Score: 0</div>
+        <div id="high-score-display">High Score: 0</div>
+        
+        <div id="start-screen" class="text-center">
+            <h1 class="text-5xl font-bold mb-6 text-yellow-400">GRAFFITI RUNNER</h1>
+            <p class="text-xl mb-8 max-w-md px-4">EASY MODE!<br>You're Jake, caught tagging a subway station!<br>Run from the inspector and his dog!</p>
+            <button id="start-button" class="bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-3 px-8 rounded-full text-xl transition-all transform hover:scale-105">
+                START RUNNING
+            </button>
+            <div class="mt-8 text-gray-300">
+                <p class="mb-2">CONTROLS:</p>
+                <p>↑ or W = Jump</p>
+                <p>↓ or S = Slide</p>
+                <p>← → or A D = Change lanes</p>
+            </div>
+        </div>
+        
+        <div id="game-over-screen" class="hidden">
+            <h1 class="text-5xl font-bold mb-6 text-red-500">GAME OVER</h1>
+            <p class="text-2xl mb-2">Your Score: <span id="final-score" class="text-yellow-400">0</span></p>
+            <p class="text-xl mb-6">High Score: <span id="final-high-score" class="text-yellow-400">0</span></p>
+            <button id="restart-button" class="bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-3 px-8 rounded-full text-xl transition-all transform hover:scale-105">
+                TRY AGAIN
+            </button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Game elements
+            const canvas = document.getElementById('game-canvas');
+            const ctx = canvas.getContext('2d');
+            const startScreen = document.getElementById('start-screen');
+            const gameOverScreen = document.getElementById('game-over-screen');
+            const startButton = document.getElementById('start-button');
+            const restartButton = document.getElementById('restart-button');
+            const scoreDisplay = document.getElementById('score-display');
+            const highScoreDisplay = document.getElementById('high-score-display');
+            const finalScoreDisplay = document.getElementById('final-score');
+            const finalHighScoreDisplay = document.getElementById('final-high-score');
+            
+            // Game state
+            let gameRunning = false;
+            let score = 0;
+            let highScore = localStorage.getItem('graffitiRunnerHighScore') || 0;
+            let speed = 3; // Daha yavaş başlangıç hızı
+            let gameSpeedIncreaseInterval;
+            let animationId;
+            
+            // Player properties
+            const player = {
+                x: canvas.width / 2 - 25,
+                y: canvas.height - 150,
+                width: 50,
+                height: 80,
+                lane: 1, // 0: left, 1: middle, 2: right
+                isJumping: false,
+                isSliding: false,
+                jumpHeight: 150,
+                slideHeight: 40,
+                normalHeight: 80,
+                jumpVelocity: 0,
+                gravity: 2, // Daha hafif yerçekimi
+                color: '#3B82F6'
+            };
+            
+            // Game elements
+            const lanes = [
+                canvas.width * 0.25 - 25,
+                canvas.width * 0.5 - 25,
+                canvas.width * 0.75 - 25
+            ];
+            
+            let obstacles = [];
+            let coins = [];
+            let powerups = [];
+            let trains = [];
+            
+            // Resize canvas to window size
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                
+                // Update lane positions
+                lanes[0] = canvas.width * 0.25 - 25;
+                lanes[1] = canvas.width * 0.5 - 25;
+                lanes[2] = canvas.width * 0.75 - 25;
+                
+                // Update player position based on current lane
+                player.x = lanes[player.lane];
+            }
+            
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+            
+            // Start game
+            startButton.addEventListener('click', startGame);
+            restartButton.addEventListener('click', startGame);
+            
+            function startGame() {
+                gameRunning = true;
+                score = 0;
+                speed = 3; // Daha yavaş başlangıç hızı
+                obstacles = [];
+                coins = [];
+                powerups = [];
+                trains = [];
+                
+                player.lane = 1;
+                player.isJumping = false;
+                player.isSliding = false;
+                player.height = player.normalHeight;
+                player.y = canvas.height - 150;
+                player.x = lanes[player.lane];
+                
+                startScreen.style.display = 'none';
+                gameOverScreen.style.display = 'none';
+                
+                scoreDisplay.textContent = `Score: ${score}`;
+                highScoreDisplay.textContent = `High Score: ${highScore}`;
+                
+                // Start game speed increase interval
+                clearInterval(gameSpeedIncreaseInterval);
+                gameSpeedIncreaseInterval = setInterval(() => {
+                    speed += 0.1; // Daha yavaş hız artışı
+                }, 3000);
+                
+                // Start game loop
+                cancelAnimationFrame(animationId);
+                gameLoop();
+            }
+            
+            // Game over
+            function gameOver() {
+                gameRunning = false;
+                clearInterval(gameSpeedIncreaseInterval);
+                cancelAnimationFrame(animationId);
+                
+                // Update high score
+                if (score > highScore) {
+                    highScore = score;
+                    localStorage.setItem('graffitiRunnerHighScore', highScore);
+                }
+                
+                finalScoreDisplay.textContent = score;
+                finalHighScoreDisplay.textContent = highScore;
+                gameOverScreen.style.display = 'flex';
+            }
+            
+            // Game loop
+            function gameLoop() {
+                // Clear canvas
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw background (subway tunnel effect)
+                drawBackground();
+                
+                // Update and draw player
+                updatePlayer();
+                drawPlayer();
+                
+                // Generate and update obstacles
+                generateObstacles();
+                updateObstacles();
+                
+                // Generate and update coins
+                generateCoins();
+                updateCoins();
+                
+                // Generate and update powerups
+                generatePowerups();
+                updatePowerups();
+                
+                // Generate and update trains
+                generateTrains();
+                updateTrains();
+                
+                // Update score
+                score += Math.floor(speed / 2);
+                scoreDisplay.textContent = `Score: ${score}`;
+                
+                // Continue game loop
+                if (gameRunning) {
+                    animationId = requestAnimationFrame(gameLoop);
+                }
+            }
+            
+            // Draw background
+            function drawBackground() {
+                // Tunnel effect
+                ctx.fillStyle = '#1F2937';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Side walls
+                ctx.fillStyle = '#4B5563';
+                ctx.fillRect(0, 0, canvas.width * 0.2, canvas.height);
+                ctx.fillRect(canvas.width * 0.8, 0, canvas.width * 0.2, canvas.height);
+                
+                // Tracks
+                ctx.fillStyle = '#374151';
+                for (let i = 0; i < 3; i++) {
+                    ctx.fillRect(canvas.width * (0.2 + i * 0.2), canvas.height - 30, 10, 30);
+                }
+                
+                // Moving tunnel lines for speed effect
+                ctx.strokeStyle = '#6B7280';
+                ctx.lineWidth = 2;
+                for (let y = 0; y < canvas.height; y += 40) {
+                    const offset = (Date.now() / 50) % 40;
+                    ctx.beginPath();
+                    ctx.moveTo(canvas.width * 0.2, y - offset);
+                    ctx.lineTo(canvas.width * 0.8, y - offset);
+                    ctx.stroke();
+                }
+            }
+            
+            // Player functions
+            function updatePlayer() {
+                // Jumping physics
+                if (player.isJumping) {
+                    player.y -= player.jumpVelocity;
+                    player.jumpVelocity -= player.gravity * 0.3; // Daha yavaş düşüş
+                    
+                    if (player.y >= canvas.height - 150) {
+                        player.y = canvas.height - 150;
+                        player.isJumping = false;
+                        player.jumpVelocity = 0;
+                    }
+                }
+                
+                // Sliding
+                if (player.isSliding) {
+                    if (player.height > player.slideHeight) {
+                        player.height -= 1; // Daha yavaş kayma
+                        player.y += 1;
+                    }
+                } else {
+                    if (player.height < player.normalHeight) {
+                        player.height += 1; // Daha yavaş ayağa kalkma
+                        player.y -= 1;
+                    }
+                }
+                
+                // Move to correct lane
+                const targetX = lanes[player.lane];
+                const diff = targetX - player.x;
+                player.x += diff * 0.2; // Smooth lane transition
+            }
+            
+            function drawPlayer() {
+                ctx.fillStyle = player.color;
+                
+                // Draw Jake character
+                // Body
+                ctx.fillRect(player.x, player.y, player.width, player.height);
+                
+                // Head
+                ctx.fillStyle = '#F59E0B';
+                ctx.beginPath();
+                ctx.arc(player.x + player.width/2, player.y - 15, 20, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Spray can if not sliding
+                if (!player.isSliding) {
+                    ctx.fillStyle = '#EF4444';
+                    ctx.fillRect(player.x + player.width, player.y + 20, 15, 25);
+                }
+                
+                // Eyes
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(player.x + player.width/2 - 8, player.y - 20, 5, 0, Math.PI * 2);
+                ctx.arc(player.x + player.width/2 + 8, player.y - 20, 5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Pupils
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(player.x + player.width/2 - 8, player.y - 20, 2, 0, Math.PI * 2);
+                ctx.arc(player.x + player.width/2 + 8, player.y - 20, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Obstacle functions
+            function generateObstacles() {
+                if (Math.random() < 0.01) { // Daha az sıklıkta engel
+                    const lane = Math.floor(Math.random() * 3);
+                    const types = ['barrier', 'dog', 'inspector'];
+                    const type = types[Math.floor(Math.random() * types.length)];
+                    
+                    obstacles.push({
+                        x: lanes[lane],
+                        y: -100,
+                        width: 50,
+                        height: type === 'dog' ? 40 : 80,
+                        lane: lane,
+                        type: type
+                    });
+                }
+            }
+            
+            function updateObstacles() {
+                for (let i = obstacles.length - 1; i >= 0; i--) {
+                    const obstacle = obstacles[i];
+                    obstacle.y += speed * 0.9; // Engeller daha yavaş
+                    
+                    // Draw obstacle
+                    ctx.fillStyle = obstacle.type === 'barrier' ? '#9CA3AF' : 
+                                    obstacle.type === 'dog' ? '#78350F' : '#1E40AF';
+                    
+                    if (obstacle.type === 'dog') {
+                        // Draw dog
+                        ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+                        
+                        // Dog head
+                        ctx.beginPath();
+                        ctx.arc(obstacle.x + obstacle.width/2, obstacle.y - 10, 15, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Eyes
+                        ctx.fillStyle = 'white';
+                        ctx.beginPath();
+                        ctx.arc(obstacle.x + obstacle.width/2 - 5, obstacle.y - 15, 3, 0, Math.PI * 2);
+                        ctx.arc(obstacle.x + obstacle.width/2 + 5, obstacle.y - 15, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                    } else if (obstacle.type === 'inspector') {
+                        // Draw inspector
+                        ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+                        
+                        // Head
+                        ctx.fillStyle = '#F59E0B';
+                        ctx.beginPath();
+                        ctx.arc(obstacle.x + obstacle.width/2, obstacle.y - 15, 20, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Hat
+                        ctx.fillStyle = '#1E40AF';
+                        ctx.fillRect(obstacle.x + obstacle.width/2 - 25, obstacle.y - 35, 50, 15);
+                        
+                        // Eyes
+                        ctx.fillStyle = 'white';
+                        ctx.beginPath();
+                        ctx.arc(obstacle.x + obstacle.width/2 - 8, obstacle.y - 20, 5, 0, Math.PI * 2);
+                        ctx.arc(obstacle.x + obstacle.width/2 + 8, obstacle.y - 20, 5, 0, Math.PI * 2);
+                        ctx.fill();
+                    } else {
+                        // Draw barrier
+                        ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+                    }
+                    
+                    // Check collision
+                    if (
+                        player.lane === obstacle.lane &&
+                        player.x < obstacle.x + obstacle.width &&
+                        player.x + player.width > obstacle.x &&
+                        player.y < obstacle.y + obstacle.height &&
+                        player.y + player.height > obstacle.y
+                    ) {
+                        if (!player.isJumping || obstacle.type === 'barrier') {
+                            gameOver();
+                        }
+                    }
+                    
+                    // Remove if off screen
+                    if (obstacle.y > canvas.height) {
+                        obstacles.splice(i, 1);
+                    }
+                }
+            }
+            
+            // Coin functions
+            function generateCoins() {
+                if (Math.random() < 0.05) { // Daha fazla coin
+                    const lane = Math.floor(Math.random() * 3);
+                    
+                    coins.push({
+                        x: lanes[lane] + 15,
+                        y: -30,
+                        width: 20,
+                        height: 20,
+                        lane: lane,
+                        value: 10
+                    });
+                }
+            }
+            
+            function updateCoins() {
+                for (let i = coins.length - 1; i >= 0; i--) {
+                    const coin = coins[i];
+                    coin.y += speed;
+                    
+                    // Draw coin
+                    ctx.fillStyle = '#FBBF24';
+                    ctx.beginPath();
+                    ctx.arc(coin.x, coin.y, coin.width/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Check collection
+                    if (
+                        player.lane === coin.lane &&
+                        player.x < coin.x + coin.width &&
+                        player.x + player.width > coin.x &&
+                        player.y < coin.y + coin.height &&
+                        player.y + player.height > coin.y
+                    ) {
+                        score += coin.value;
+                        coins.splice(i, 1);
+                    }
+                    
+                    // Remove if off screen
+                    if (coin.y > canvas.height) {
+                        coins.splice(i, 1);
+                    }
+                }
+            }
+            
+            // Powerup functions
+            function generatePowerups() {
+                if (Math.random() < 0.008) { // Daha fazla powerup
+                    const lane = Math.floor(Math.random() * 3);
+                    const types = ['jetpack', 'magnet', 'superShoes'];
+                    const type = types[Math.floor(Math.random() * types.length)];
+                    
+                    powerups.push({
+                        x: lanes[lane],
+                        y: -50,
+                        width: 40,
+                        height: 40,
+                        lane: lane,
+                        type: type
+                    });
+                }
+            }
+            
+            function updatePowerups() {
+                for (let i = powerups.length - 1; i >= 0; i--) {
+                    const powerup = powerups[i];
+                    powerup.y += speed;
+                    
+                    // Draw powerup
+                    if (powerup.type === 'jetpack') {
+                        ctx.fillStyle = '#EF4444';
+                        ctx.fillRect(powerup.x, powerup.y, powerup.width, powerup.height);
+                        ctx.fillStyle = '#F59E0B';
+                        ctx.fillRect(powerup.x + 5, powerup.y + 5, 30, 30);
+                    } else if (powerup.type === 'magnet') {
+                        ctx.fillStyle = '#10B981';
+                        ctx.beginPath();
+                        ctx.arc(powerup.x + powerup.width/2, powerup.y + powerup.height/2, powerup.width/2, 0, Math.PI * 2);
+                        ctx.fill();
+                    } else {
+                        ctx.fillStyle = '#3B82F6';
+                        ctx.fillRect(powerup.x, powerup.y, powerup.width, 20);
+                        ctx.fillRect(powerup.x, powerup.y + 20, powerup.width, 20);
+                    }
+                    
+                    // Check collection
+                    if (
+                        player.lane === powerup.lane &&
+                        player.x < powerup.x + powerup.width &&
+                        player.x + player.width > powerup.x &&
+                        player.y < powerup.y + powerup.height &&
+                        player.y + player.height > powerup.y
+                    ) {
+                        activatePowerup(powerup.type);
+                        powerups.splice(i, 1);
+                    }
+                    
+                    // Remove if off screen
+                    if (powerup.y > canvas.height) {
+                        powerups.splice(i, 1);
+                    }
+                }
+            }
+            
+            function activatePowerup(type) {
+                if (type === 'jetpack') {
+                    player.isJumping = true;
+                    player.jumpVelocity = 20; // Daha yüksek zıplama
+                    setTimeout(() => {
+                        player.isJumping = false;
+                        player.jumpVelocity = 0;
+                    }, 3000); // Daha uzun jetpack süresi
+                } else if (type === 'magnet') {
+                    // Attract nearby coins
+                    const magnetInterval = setInterval(() => {
+                        for (let i = coins.length - 1; i >= 0; i--) {
+                            const coin = coins[i];
+                            if (Math.abs(coin.y - player.y) < 300) { // Daha geniş mıknatıs alanı
+                                coin.x += (player.x - coin.x) * 0.2; // Daha hızlı çekim
+                            }
+                        }
+                    }, 50);
+                    
+                    setTimeout(() => {
+                        clearInterval(magnetInterval);
+                    }, 5000); // 5 saniye mıknatıs
+                } else if (type === 'superShoes') {
+                    speed += 2; // Daha az hız artışı
+                    setTimeout(() => {
+                        speed -= 2;
+                    }, 7000); // Daha uzun süper ayakkabı süresi
+                }
+            }
+            
+            // Train functions
+            function generateTrains() {
+                if (Math.random() < 0.005) { // Daha az tren
+                    const lane = Math.floor(Math.random() * 3);
+                    
+                    trains.push({
+                        x: lanes[lane] - 50,
+                        y: -300,
+                        width: 150,
+                        height: 150,
+                        lane: lane
+                    });
+                }
+            }
+            
+            function updateTrains() {
+                for (let i = trains.length - 1; i >= 0; i--) {
+                    const train = trains[i];
+                    train.y += speed * 1.2; // Trenler daha yavaş
+                    
+                    // Draw train
+                    ctx.fillStyle = '#DC2626';
+                    ctx.fillRect(train.x, train.y, train.width, train.height);
+                    
+                    // Windows
+                    ctx.fillStyle = '#93C5FD';
+                    for (let j = 0; j < 3; j++) {
+                        ctx.fillRect(train.x + 20 + j * 35, train.y + 20, 25, 25);
+                    }
+                    
+                    // Check collision
+                    if (
+                        player.lane === train.lane &&
+                        player.x < train.x + train.width &&
+                        player.x + player.width > train.x &&
+                        player.y < train.y + train.height &&
+                        player.y + player.height > train.y
+                    ) {
+                        gameOver();
+                    }
+                    
+                    // Remove if off screen
+                    if (train.y > canvas.height) {
+                        trains.splice(i, 1);
+                    }
+                }
+            }
+            
+            // Keyboard controls
+            document.addEventListener('keydown', (e) => {
+                if (!gameRunning) return;
+                
+                switch(e.key) {
+                    case 'ArrowLeft':
+                    case 'a':
+                        if (player.lane > 0) player.lane--;
+                        break;
+                    case 'ArrowRight':
+                    case 'd':
+                        if (player.lane < 2) player.lane++;
+                        break;
+                    case 'ArrowUp':
+                    case 'w':
+                        if (!player.isJumping) {
+                            player.isJumping = true;
+                            player.jumpVelocity = 15;
+                        }
+                        break;
+                    case 'ArrowDown':
+                    case 's':
+                        player.isSliding = true;
+                        break;
+                }
+            });
+            
+            document.addEventListener('keyup', (e) => {
+                if (e.key === 'ArrowDown' || e.key === 's') {
+                    player.isSliding = false;
+                }
+            });
+            
+            // Touch controls for mobile
+            let touchStartX = 0;
+            let touchStartY = 0;
+            
+            document.addEventListener('touchstart', (e) => {
+                if (!gameRunning) return;
+                
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+            });
+            
+            document.addEventListener('touchend', (e) => {
+                if (!gameRunning) return;
+                
+                const touchEndX = e.changedTouches[0].clientX;
+                const touchEndY = e.changedTouches[0].clientY;
+                
+                const diffX = touchEndX - touchStartX;
+                const diffY = touchEndY - touchStartY;
+                
+                // Horizontal swipe
+                if (Math.abs(diffX) > Math.abs(diffY)) {
+                    if (diffX > 0 && player.lane < 2) {
+                        player.lane++;
+                    } else if (diffX < 0 && player.lane > 0) {
+                        player.lane--;
+                    }
+                } 
+                // Vertical swipe
+                else {
+                    if (diffY < 0 && !player.isJumping) {
+                        player.isJumping = true;
+                        player.jumpVelocity = 15;
+                    } else if (diffY > 0) {
+                        player.isSliding = !player.isSliding;
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>
